@@ -1,0 +1,6 @@
+/charming-whatsmeow
+*.test
+*.out
+.DS_Store
+.claude/
+.remember/
