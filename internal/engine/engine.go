@@ -112,6 +112,7 @@ type MessagingEngine interface {
 	// Lifecycle.
 	Connect(ctx context.Context) error
 	Disconnect() error
+	Logout(ctx context.Context) error
 	PairingFlow(ctx context.Context) <-chan PairingEvent
 
 	// Reads.

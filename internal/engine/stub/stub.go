@@ -27,6 +27,7 @@ func New() *Engine {
 
 func (e *Engine) Connect(context.Context) error                          { return nil }
 func (e *Engine) Disconnect() error                                      { return nil }
+func (e *Engine) Logout(context.Context) error                           { return nil }
 func (e *Engine) PairingFlow(context.Context) <-chan engine.PairingEvent { return e.pairing }
 
 func (e *Engine) Chats(context.Context) ([]engine.Chat, error)       { return nil, nil }

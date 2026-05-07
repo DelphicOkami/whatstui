@@ -1,6 +1,4 @@
-// Command charming-whatsmeow boots the TUI wired to a stub engine. M0 only.
-// Real engines land in later milestones; this binary exists to prove the
-// engine ↔ UI seam compiles and runs end to end.
+// Command charming-whatsmeow boots the TUI wired to the WhatsApp engine.
 package main
 
 import (
@@ -9,13 +7,17 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/delphicokami/charming-whatsmeow/internal/engine/stub"
+	"github.com/delphicokami/charming-whatsmeow/internal/engine/whatsapp"
 	"github.com/delphicokami/charming-whatsmeow/internal/ui"
 )
 
 func main() {
-	eng := stub.New()
-	p := tea.NewProgram(ui.New(eng))
+	eng, err := whatsapp.New("")
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	p := tea.NewProgram(ui.New(eng), tea.WithAltScreen())
 	if _, err := p.Run(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
