@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	// Blank import to allow interaction through std library's *sql.DB *sql.Tx and *sql.Rows
 	_ "modernc.org/sqlite"
 
 	"github.com/delphicokami/whatstui/internal/engine"

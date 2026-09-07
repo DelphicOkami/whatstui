@@ -1104,15 +1104,14 @@ func (m Model) clampedListOffset() int {
 	if n == 0 {
 		return 0
 	}
-	cap := m.listCapacity()
+	
+	capacity := m.listCapacity()
 	off := m.listOffset
-	if m.selectedIdx < off {
-		off = m.selectedIdx
+	m.selectedIdx = min(m.selectedIdx, off)
+	if m.selectedIdx >= off+capacity {
+		off = m.selectedIdx - capacity + 1
 	}
-	if m.selectedIdx >= off+cap {
-		off = m.selectedIdx - cap + 1
-	}
-	if maxOff := n - cap; off > maxOff {
+	if maxOff := n - capacity; off > maxOff {
 		off = maxOff
 	}
 	if off < 0 {
@@ -1624,12 +1623,7 @@ func (m Model) renderSyncBar() string {
 	label = fmt.Sprintf(" Initial sync (%s) %d%% ", label, m.syncPercent)
 	barWidth := max(width-lipgloss.Width(label)-2, 8)
 	filled := barWidth * m.syncPercent / 100
-	if filled < 0 {
-		filled = 0
-	}
-	if filled > barWidth {
-		filled = barWidth
-	}
+	filled = min(max(filled, 0), barWidth)
 	bar := strings.Repeat("█", filled) + strings.Repeat("░", barWidth-filled)
 	return syncBarStyle.Render(label+bar) + "\n"
 }
@@ -1713,11 +1707,9 @@ func (m Model) renderChatList(innerWidth int) string {
 		return b.String()
 	}
 	off := m.clampedListOffset()
-	cap := m.listCapacity()
-	end := off + cap
-	if end > len(vc) {
-		end = len(vc)
-	}
+	capacity := m.listCapacity()
+	end := off + capacity
+	end = min(end, len(vc))
 	if off > 0 {
 		b.WriteString(emptyHintStyle.Render("↑ more"))
 		b.WriteString("\n")
@@ -2035,20 +2027,20 @@ func formatTimestamp(t time.Time) string {
 	return t.Format("02/01")
 }
 
-func truncate(s string, max int) string {
-	if max <= 0 {
+func truncate(s string, m int) string {
+	if m <= 0 {
 		return ""
 	}
-	if lipgloss.Width(s) <= max {
+	if lipgloss.Width(s) <= m {
 		return s
 	}
-	if max == 1 {
+	if m == 1 {
 		return "…"
 	}
 	runes := []rune(s)
 	for len(runes) > 0 {
 		candidate := string(runes) + "…"
-		if lipgloss.Width(candidate) <= max {
+		if lipgloss.Width(candidate) <= m {
 			return candidate
 		}
 		runes = runes[:len(runes)-1]
