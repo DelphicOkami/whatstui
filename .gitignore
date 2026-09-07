@@ -1,4 +1,4 @@
-/charming-whatsmeow
+/bin
 *.test
 *.out
 .DS_Store
