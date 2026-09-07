@@ -7,6 +7,9 @@ build:
 run:
     go run ./cmd/whatstui
 
+run-sync:
+    go run ./cmd/whatstui --sync
+
 test:
     go test ./...
 
