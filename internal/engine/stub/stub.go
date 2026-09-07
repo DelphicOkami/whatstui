@@ -8,7 +8,7 @@ import (
 	"errors"
 	"time"
 
-	"github.com/delphicokami/charming-whatsmeow/internal/engine"
+	"github.com/delphicokami/whatstui/internal/engine"
 )
 
 // Engine is a no-op MessagingEngine.
@@ -33,6 +33,10 @@ func (e *Engine) PairingFlow(context.Context) <-chan engine.PairingEvent { retur
 func (e *Engine) Chats(context.Context) ([]engine.Chat, error)       { return nil, nil }
 func (e *Engine) Contacts(context.Context) ([]engine.Contact, error) { return nil, nil }
 func (e *Engine) History(context.Context, engine.ChatID, time.Time, int) ([]engine.Message, error) {
+	return nil, nil
+}
+func (e *Engine) RequestHistory(context.Context, engine.ChatID, int) error { return nil }
+func (e *Engine) GroupParticipants(context.Context, engine.ChatID) ([]engine.GroupParticipant, error) {
 	return nil, nil
 }
 

@@ -4,8 +4,8 @@ import (
 	"context"
 	"testing"
 
-	"github.com/delphicokami/charming-whatsmeow/internal/engine"
-	"github.com/delphicokami/charming-whatsmeow/internal/engine/stub"
+	"github.com/delphicokami/whatstui/internal/engine"
+	"github.com/delphicokami/whatstui/internal/engine/stub"
 )
 
 // Compile-time check that *Engine satisfies the interface.

@@ -1,0 +1,347 @@
+TUI layout reference
+====================
+
+Source of truth for the on-screen structure. Update this file whenever the View
+code in internal/ui/ui.go changes shape.
+
+Target shape (all milestones): chat list on the left, chat content on the
+right, composer input pinned to the bottom of the right pane. layout.png is a
+loose visual reference only — we are not cloning WhatsApp Web.
+
+Conventions
+-----------
+[ ... ]   lipgloss-styled block (border, padding, bg)
+< ... >   dynamic content
+M2/M3/... milestone where the element first appears
+
+================================================================================
+M2 — current state (chat list + placeholder right pane)
+================================================================================
+
+Width: m.width  (fallback 100). Height: m.height (fallback 30).
+leftWidth  = clamp(width/3, 28, 50)
+rightWidth = width - leftWidth - 1
+bodyHeight = max(height-3, 5)   # leaves room for header + footer
+
++------------------------------------------------------------------------------+
+| [ whatstui ]                                                       |  <- appHeader (headerStyle, bg=22, bold)
++----------------------------+-------------------------------------------------+
+| [ chat list pane         ] | [ right pane                                  ] |
+| listPaneStyle              | rightPaneStyle (padding 1,2)                    |
+| right border, fg=240       |                                                 |
+|                            |                                                 |
+|  <chat row 0>              |  <selected chat title>                          |
+|  <chat row 1>  *selected*  |                                                 |
+|  <chat row 2>              |  Last message: <snippet>                        |
+|  ...                       |                                                 |
+|                            |  Message scrollback lands in M3.                |
+|                            |                                                 |
+|  (empty state:             |  (empty state:                                  |
+|   "No chats yet.")         |   "Select a chat to view messages.")            |
++----------------------------+-------------------------------------------------+
+| q: quit   L: log out   ↑/↓: navigate                                         |  <- footer (plain text)
++------------------------------------------------------------------------------+
+
+Chat row (renderChatRow), 2 lines tall, width = leftWidth-2:
+
+  +--------------------------------------------------+
+  | <title, bold, truncated>            <timestamp>  |   titleLine
+  | <snippet, fg=245, truncated>             [ N ]   |   snippet + optional unread badge
+  +--------------------------------------------------+
+
+  - Group chats prefix title with "# ".
+  - Selected row: bg=236, fg=15 across full row width.
+  - Timestamp formatting (formatTimestamp):
+      same day  -> "15:04"
+      <7 days   -> "Mon"
+      else      -> "02/01"
+  - Unread badge: bg=34 (green), fg=15, bold, "%d" count.
+
+State machine (Model.state) -> View():
+  stateInitializing  -> "connecting…"
+  statePairing       -> QR block (qrterminal half-blocks)
+  stateConnected     -> renderConnected() (the diagram above)
+  stateDisconnected  -> "Disconnected. Reconnecting…"
+  stateError         -> "Error: <err>"
+
+Keybindings handled in Update():
+  q / ctrl+c   Disconnect + quit
+  L            Logout (clears chats, returns to pairing)
+  ↑ / k        selectedIdx--
+  ↓ / j        selectedIdx++
+
+================================================================================
+M3 target — conversation view & send
+================================================================================
+
+Right pane gains a header / scrollback / composer stack. Left pane unchanged.
+
++----------------------------+-------------------------------------------------+
+| [ chat list pane         ] | <chat title>            <presence/typing>       |  <- conversation header
+|                            +-------------------------------------------------+
+|                            | [ message scrollback (viewport)               ] |
+|                            |                                                 |
+|                            |   <date separator: "—— Today ——">               |
+|                            |   <incoming message, left-aligned>              |
+|                            |   <outgoing message, right-aligned>             |
+|                            |     status glyph: ✓  ✓✓  ✓✓ (read)              |
+|                            |                                                 |
+|                            |   (auto-scroll to bottom on new message;        |
+|                            |    PgUp pauses auto-scroll)                     |
+|                            +-------------------------------------------------+
+|                            | > <draft text>                                  |  <- composer (textinput), bottom
++----------------------------+-------------------------------------------------+
+| q: quit   L: log out   ↑/↓: navigate   enter: send   esc: back to list       |
++------------------------------------------------------------------------------+
+
+Right-pane vertical budget:
+  headerH    = 1
+  composerH  = 1 (single-line for M3; grow later if multi-line wanted)
+  scrollH    = bodyHeight - headerH - composerH - separators
+
+New model fields (anticipated):
+  openChat       *engine.ChatID
+  messages       map[engine.ChatID][]engine.Message
+  viewport       viewport.Model
+  composer       textinput.Model
+  pendingSends   map[engine.MessageID]time.Time   # for status reconciliation
+
+Engine wiring:
+  - On chat selection + enter: load via History(ctx, chatID, time{}, N).
+  - SendText on composer submit; optimistic append with "sending" status.
+  - MessageStatusChanged event updates the rendered tick glyph in place.
+
+Focus model:
+  - Default focus: chat list (j/k navigate, enter opens).
+  - When a chat is open: focus moves to composer; esc returns focus to list.
+  - Tab toggles focus between scrollback (for PgUp/PgDn) and composer.
+
+================================================================================
+M4 — current state (history backfill / lazy load) — IMPLEMENTED
+================================================================================
+
+  Engine interface additions:
+    - RequestHistory(ctx, chatID, count) error  — asks the backend for
+      up to `count` older messages beyond what's locally stored. Returns
+      immediately; the result lands asynchronously through events.
+    - HistoryBackfilled{ChatID, AddedCount}  — emitted after the engine
+      has persisted a backfill batch. UI re-reads History on this signal.
+    - Capabilities.HistorySync gates whether the UI escalates a drained
+      local read to RequestHistory.
+
+  WhatsApp engine wiring:
+    - internal/store/messagestore (SQLite, sibling of chatstore at
+      messages.db) persists every Message the engine sees: inbound
+      events, optimistic outbound sends, SetStatus on every receipt,
+      and HistorySync ingestion via InsertIfNew so backfill never
+      overwrites a more-current live row.
+    - handleEvent now also handles *events.HistorySync — walks
+      Conversations → HistorySyncMsg → WebMessageInfo, normalises into
+      engine.Message, persists, and emits HistoryBackfilled per chat
+      with a non-zero new-row count. Catches INITIAL_BOOTSTRAP / RECENT
+      / FULL pushes (free recent history on first connect) and the
+      ON_DEMAND replies we trigger ourselves.
+    - oldestInfo map[ChatID]types.MessageInfo caches the oldest known
+      anchor per chat (updated on every ingest path). Required because
+      whatsmeow.BuildHistorySyncRequest needs a real MessageInfo to
+      pivot on.
+    - RequestHistory: BuildHistorySyncRequest(oldestInfo, count) +
+      client.SendPeerMessage(...). If oldestInfo is empty, no-ops
+      (caller can call optimistically).
+    - Logout wipes messages.db and clears oldestInfo alongside
+      session.db / store.db.
+
+  UI lazy-load state machine:
+    - On opening a chat for the first time this session, fire
+      History(chatID, time{}, 20). Result merges with any live
+      in-memory events (dedup by MessageID), viewport jumps to bottom,
+      historyLoaded[chatID] = true. Loading banner: "Loading older
+      messages…".
+    - Scroll-up keys (k/up, ctrl+u, ctrl+b/pgup, g) at AtTop() trigger
+      a *local* prepend: History(chatID, oldest.Timestamp, 20). If it
+      returns rows: splice ahead of the buffer; YOffset re-anchored by
+      the new line-count delta so the row the user was reading stays
+      put.
+    - If the prepend returns ZERO rows AND Capabilities.HistorySync is
+      true AND the chat isn't already marked exhausted, escalate to a
+      server backfill: RequestHistory(chatID, 50). Banner copy switches
+      to "Fetching older messages from server…".
+    - Three things can wake us up from awaitingBackfill:
+        1. HistoryBackfilled{ChatID == openChat} — re-read the local
+           store with the now-older oldest timestamp; new rows splice
+           in, banner clears.
+        2. backfillTimeoutMsg (15s) — server didn't respond. Mark
+           exhausted, clear banner.
+        3. RequestHistory itself returned an error — same handling.
+    - If Capabilities.HistorySync is false, an empty prepend marks the
+      chat exhausted immediately (no server escalation).
+
+  Page sizes:
+    historyPageSize        = 20  (local read)
+    historyServerPageSize  = 50  (whatsmeow's recommendation per pull)
+    historyBackfillTimeout = 15s
+
+  New model fields:
+    historyLoaded     map[ChatID]bool
+    historyExhausted  map[ChatID]bool
+    historyLoading    bool
+    loadingKind       enum {None, Local, Server}
+    loadingChat       ChatID
+    awaitingBackfill  bool
+
+  Right-pane vertical when loading banner active: gains 1 line; the
+  viewport doesn't shrink, so the input briefly slips below the visible
+  body. Acceptable because requests are short-lived.
+
+================================================================================
+M5 — current state (groups & new chats) — IMPLEMENTED
+================================================================================
+
+  Engine interface additions:
+    - GroupParticipants(ctx, chatID) ([]GroupParticipant, error) — returns
+      group membership. Engines without Capabilities.Groups should return
+      nil; the UI gates the call on the flag.
+    - GroupParticipant{ID, Name, IsAdmin} — engine-neutral participant row.
+
+  WhatsApp engine wiring:
+    - StartChat: accepts a phone number (any of "+447…", "447…", "0447…")
+      or a full s.whatsapp.net JID. Phone path strips formatting and
+      verifies via client.IsOnWhatsApp; the canonical JID returned by the
+      server is what we persist. Existing chats are returned as-is.
+      Group JIDs are rejected — that lives behind CreateGroup (descoped
+      for now; still returns ErrUnsupported at the engine).
+    - GroupParticipants: client.GetGroupInfo, names enriched via the local
+      contact store (FullName / BusinessName / PushName) with the JID user
+      portion as a final fallback. IsAdmin is true for both admin and
+      super-admin participants.
+
+  UI wiring:
+    - 'n' key (chat-list pane, normal mode): opens an inline new-chat
+      prompt above the list. The textinput owns every key while active so
+      typing 'q' / 'n' / 'j' inserts characters instead of firing
+      normal-mode commands. Esc cancels; enter calls StartChat. On
+      success the new chat is upserted, selected, and the list reloaded.
+      On error the prompt stays open with a red status line.
+    - 'm' key (conversation pane, normal mode): toggles a group-member
+      overlay in place of the message viewport. Gated on
+      Capabilities().Groups AND the chat's IsGroup flag — no-op
+      otherwise. Participants are fetched once per chat per session and
+      cached on the model. Admin rows are prefixed with "*".
+    - openSelectedChat resets showingMembers; esc/h/left from
+      conversation pane also closes the overlay on the way back.
+
+  Right-pane vertical when overlay active: viewport content is replaced
+  by the member list rendering (same height budget) — no shrink, no
+  composer movement.
+
+  Footer copy:
+    chat list  -> "j/k: nav   enter/l: open   n: new chat   q: quit   L: log out"
+    new chat   -> "esc: cancel   enter: start chat"
+    conv norm  -> "h/esc: back   j/k: scroll   i: insert   m: members   q: quit"
+
+  New model fields:
+    newChat         textinput.Model
+    newChatActive   bool
+    newChatBusy     bool
+    newChatErr      string
+    members         map[ChatID][]GroupParticipant
+    membersLoading  bool
+    membersErr      string
+    showingMembers  bool
+
+  Out of scope for M5 (deferred):
+    - CreateGroup UI (engine method still returns ErrUnsupported).
+      Multi-participant picker is a non-trivial sub-screen; revisit when
+      we tackle M6 polish or sooner if the user asks.
+
+================================================================================
+M6 target — polish
+================================================================================
+
+  - "/" opens search across chats + messages (replaces composer focus).
+  - "?" toggles a keybinding cheat-sheet line above the footer.
+  - Theming via lipgloss.AdaptiveColor; light/dark detection.
+  - Desktop bell on incoming MessageReceived when window unfocused.
+  - Media placeholder rendering inline: "[image]", "[voice 0:14]",
+    "[document.pdf]".
+
+================================================================================
+M6 — current state (polish) — IMPLEMENTED
+================================================================================
+
+  Search ("/"):
+    - Single textinput.Model owned by the model (m.searchInput) is
+      reused for both panes; m.searchPane records which pane was active
+      when the user pressed '/' so esc returns there cleanly.
+    - List pane: '/' opens the input above the chat rows. Live filter
+      as the user types — visibleChats() returns the subset whose
+      Title (lowercased) contains the query. selectedIdx is interpreted
+      against the *visible* slice so j/k/enter operate on filtered
+      rows. ChatIndex still maps IDs to the unfiltered slice so unread
+      writes and chat-updated upserts hit the right row.
+    - Conversation pane: '/' opens the same input above the viewport.
+      Live filter passes the query into renderMessages(); only message
+      bubbles whose Body contains the query are rendered, with each
+      occurrence highlighted via matchHighlightStyle (yellow bg).
+    - Esc clears m.searchQuery and closes the input. Enter commits
+      (input closes, query stays applied as a filter; '/' reopens).
+      The committed/active query also surfaces as a "filter: <q>" hint
+      under the closed input so the user remembers a filter is on.
+    - 'q' typed into the search input is treated as text — the search
+      block sits above the normal-mode keymap dispatch.
+
+  Help ("?"):
+    - m.help bool toggled by '?'. Renders a context-sensitive cheat-
+      sheet line (cheatSheetStyle, italic muted) between the body and
+      the footer in stateConnected. Empty string when off so the
+      layout doesn't shift for users who never touch it. Lines vary
+      per pane/mode (list, insert, conversation-normal, search,
+      new-chat).
+
+  Bell:
+    - bellCmd writes a single ASCII BEL byte to os.Stderr. Wired in
+      the engineMsg dispatch: any engine.MessageReceived with
+      FromMe=false batches bellCmd alongside nextEvent. No focus
+      gating — most terminals don't reliably report focus to a CLI
+      app, and the user explicitly chose always-on.
+
+  Theming:
+    - All previously hardcoded lipgloss.Color("…") values are now
+      lipgloss.AdaptiveColor{Light, Dark} pairs declared at the top
+      of the styles block (colourFg, colourAccent, colourBorder,
+      colourSelected, colourMuted, colourMeta, colourBadge,
+      colourInfo, colourFail, colourWarn, colourMatch, colourMatchFg,
+      colourFgInverse). Dark side preserves the M5 palette; Light
+      side is hand-tuned so contrast survives on a white background.
+      lipgloss auto-detects from the terminal background.
+
+  Footer copy:
+    chat list  -> "j/k: nav   enter/l: open   n: new   /: search   ?: help   q: quit"
+    conv norm  -> "h/esc: back   j/k: scroll   i: insert   m: members   /: search   ?: help"
+    insert     -> "esc: normal   enter: send   ctrl+j: newline"
+    search     -> "esc: clear   enter: commit   ?: help"
+
+  New model fields:
+    searchInput   textinput.Model
+    searchActive  bool
+    searchQuery   string
+    searchPane    pane
+    help          bool
+
+  Out of scope for M6 (deferred):
+    - Media placeholder enrichment ("[voice 0:14]", "[document.pdf]"):
+      the engine still emits the basic "[image]" / "[video]" /
+      "[audio]" / "[document]" / "[sticker]" placeholders set in
+      M2/M4. Filename + duration extraction from whatsmeow message
+      metadata is left for a later pass.
+    - In-chat match navigation (n/N to jump between matches): the
+      conversation search filters rather than highlights-and-jumps,
+      which is simpler and keeps the viewport math intact.
+
+================================================================================
+Out of scope
+================================================================================
+
+  - Avatars / inline images (terminal image protocols deferred indefinitely).
+  - Tabs across the chat list (All / Unread / Favourites) — single list only.
+  - Emoji picker, attach button, voice recording affordances.

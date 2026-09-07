@@ -30,7 +30,7 @@ Domain types live in `internal/engine` and are pure data — no `whatsmeow.JID`,
 
 ### M0 — Skeleton
 - `go mod init`, project layout, baseline `MessagingEngine` interface with no methods filled in
-- `cmd/charming-whatsmeow/main.go` boots an empty Bubble Tea app wired to a stub engine
+- `cmd/whatstui/main.go` boots an empty Bubble Tea app wired to a stub engine
 - CI: `go vet`, `go test ./...`, `golangci-lint`
 
 ### M1 — Pairing & connection

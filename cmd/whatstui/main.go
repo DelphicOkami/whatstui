@@ -1,4 +1,4 @@
-// Command charming-whatsmeow boots the TUI wired to the WhatsApp engine.
+// Command whatstui boots the TUI wired to the WhatsApp engine.
 package main
 
 import (
@@ -7,8 +7,8 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/delphicokami/charming-whatsmeow/internal/engine/whatsapp"
-	"github.com/delphicokami/charming-whatsmeow/internal/ui"
+	"github.com/delphicokami/whatstui/internal/engine/whatsapp"
+	"github.com/delphicokami/whatstui/internal/ui"
 )
 
 func main() {
